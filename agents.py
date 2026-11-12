@@ -67,50 +67,97 @@ class RxNormAgent:
 
     name = "Агент нормализации (RxNorm)"
 
+    @staticmethod
+    def _variants(query: str) -> list[str]:
+        """Варианты написания: латинские INN ('enoxaparinum natrium')
+        превращаем в английские ('enoxaparin sodium'), без которых
+        RxNorm отдаёт пустые иностранные концепты без ингредиента."""
+        q = query.strip().lower()
+        variants = [q]
+        toks = q.split()
+        if "natrium" in toks:
+            variants.append(" ".join("sodium" if t == "natrium" else t
+                                     for t in toks))
+        stripped = [t[:-2] if t.endswith("um") and len(t) > 6 else t
+                    for t in toks]
+        if stripped != toks:
+            variants.append(" ".join(stripped))
+            if "natrium" in toks:
+                variants.append(" ".join(
+                    "sodium" if t == "natrium" else
+                    (t[:-2] if t.endswith("um") and len(t) > 6 else t)
+                    for t in toks))
+        return list(dict.fromkeys(variants))
+
     def resolve(self, raw_name: str) -> DrugIdentity:
         ident = DrugIdentity(query=raw_name.strip())
         if not ident.query:
             ident.note = "пустое название"
             return ident
 
-        # 1) точный поиск по названию
-        r = _get(f"{RXNORM_BASE}/rxcui.json", params={"name": ident.query})
-        ids = r.json().get("idGroup", {}).get("rxnormId") or []
-
-        # 2) если не нашли — нечёткий поиск
-        if not ids:
-            r = _get(f"{RXNORM_BASE}/approximateTerm.json",
-                     params={"term": ident.query, "maxEntries": 5})
-            candidates = (
-                r.json().get("approximateGroup", {}).get("candidate") or []
-            )
-            ids = [c["rxcui"] for c in candidates if c.get("rxcui")]
+        # 1) собираем кандидатов по всем вариантам написания:
+        # сначала точный поиск, потом приблизительный
+        ids: list[str] = []
+        for variant in self._variants(ident.query):
+            try:
+                r = _get(f"{RXNORM_BASE}/rxcui.json",
+                         params={"name": variant})
+                for rid in r.json().get("idGroup", {}).get("rxnormId") or []:
+                    if rid not in ids:
+                        ids.append(rid)
+            except requests.RequestException:
+                pass
+            try:
+                r = _get(f"{RXNORM_BASE}/approximateTerm.json",
+                         params={"term": variant, "maxEntries": 5})
+                for c in r.json().get("approximateGroup",
+                                     {}).get("candidate") or []:
+                    rid = c.get("rxcui")
+                    if rid and rid not in ids:
+                        ids.append(rid)
+            except requests.RequestException:
+                pass
 
         if not ids:
             ident.note = "не найдено в RxNorm"
             return ident
 
-        ident.rxcui = ids[0]
-        ident.found = True
+        # 3) перебираем кандидатов: берём первый, для которого
+        # определяется действующее вещество (TTY=IN). Первый ID из
+        # точного поиска бывает «неполноценным» (инородные INN-концепты),
+        # поэтому вслепую ids[0] доверять нельзя.
+        for rid in ids[:5]:
+            ingredient = self._ingredient(rid)
+            if ingredient:
+                ident.rxcui = rid
+                ident.ingredient = ingredient
+                ident.found = True
+                break
 
-        # 3) действующее вещество
+        if not ident.found:
+            # крайний случай: ID есть, но вещество не определилось
+            ident.rxcui = ids[0]
+            ident.found = True
+            ident.ingredient = ident.query.lower()
+            ident.note = ("действующее вещество не определено, "
+                          "поиск по исходному вводу")
+
+        ident.name = ident.ingredient or ident.query
+        return ident
+
+    @staticmethod
+    def _ingredient(rxcui: str) -> str:
         try:
-            r = _get(f"{RXNORM_BASE}/rxcui/{ident.rxcui}/related.json",
+            r = _get(f"{RXNORM_BASE}/rxcui/{rxcui}/related.json",
                      params={"tty": "IN"})
             groups = r.json().get("relatedGroup", {}).get("conceptGroup") or []
             for g in groups:
                 props = g.get("conceptProperties") or []
                 if props:
-                    ident.ingredient = props[0].get("name", "")
-                    break
+                    return props[0].get("name", "")
         except requests.RequestException:
             pass
-
-        ident.name = ident.ingredient or ident.query
-        if not ident.ingredient:
-            ident.ingredient = ident.query.lower()
-            ident.note = "действующее вещество не определено, используется ввод"
-        return ident
+        return ""
 
 
 # --------------------------------------------------------------------------
@@ -166,7 +213,7 @@ class DailyMedAgent:
         search_ing = (ident.ingredient or ident.query).lower()
         best: DrugLabel | None = None
         best_score = -1
-        for item in items[:10]:
+        for item in items[:25]:
             cand = DrugLabel(query=ident.query)
             cand.setid = item.get("setid")
             cand.title = item.get("title", "")
@@ -292,7 +339,7 @@ class FAERSAgent:
 # --------------------------------------------------------------------------
 
 SEVERITY_ORDER = ["ПРОТИВОПОКАЗАНО", "ВЫСОКИЙ РИСК", "СРЕДНИЙ РИСК",
-                  "НИЗКИЙ РИСК", "НЕ ОБНАРУЖЕНО"]
+                  "НЕ ПРОВЕРЕНО", "НИЗКИЙ РИСК", "НЕ ОБНАРУЖЕНО"]
 
 _RULES: list[tuple[str, list[str]]] = [
     ("ПРОТИВОПОКАЗАНО", ["contraindicat"]),
@@ -304,6 +351,8 @@ _RULES: list[tuple[str, list[str]]] = [
         "caution", "monitor", "adjust the dose", "dose adjustment",
         "reduce the dose", "increased risk", "may increase", "may decrease",
         "may potentiate", "may enhance", "may reduce", "exercise",
+        "risk of bleeding", "chance is higher", "increased chance",
+        "chance of bleeding",
     ]),
 ]
 
@@ -313,6 +362,30 @@ _CONTEXT_WORDS = [
     "may enhance", "interact", "co-administration", "coadministration",
     "concomitant", "serum concentration", "plasma concentration",
 ]
+
+# Подсказки по фармакологическим классам: если вещество B по имени
+# в лейбле A не упомянуто, ищем его класс (стандартные фармакологические
+# факты). Повышает полноту: enoxaparin в лейблах часто фигурирует
+# как «low molecular weight heparin», aspirin — как «antiplatelet».
+CLASS_HINTS: dict[str, list[str]] = {
+    "aspirin": ["antiplatelet", "anti-platelet",
+                "platelet aggregation inhibitor"],
+    "clopidogrel": ["antiplatelet", "platelet aggregation inhibitor"],
+    "ticagrelor": ["antiplatelet", "platelet aggregation inhibitor"],
+    "warfarin": ["anticoagulant", "vitamin k antagonist"],
+    "enoxaparin": ["anticoagulant", "low molecular weight heparin", "lmwh",
+                   "heparin"],
+    "heparin": ["anticoagulant", "low molecular weight heparin"],
+    "dabigatran": ["anticoagulant", "direct thrombin inhibitor"],
+    "rivaroxaban": ["anticoagulant", "factor xa inhibitor"],
+    "apixaban": ["anticoagulant", "factor xa inhibitor"],
+    "amiodarone": ["antiarrhythmic", "cyp3a4 inhibitor", "cyp2c9 inhibitor"],
+    "digoxin": ["p-glycoprotein inhibitor", "pgp inhibitor"],
+    "metformin": [],
+    "simvastatin": ["statin", "cyp3a4 substrate"],
+    "atorvastatin": ["statin"],
+    "sildenafil": ["pde5 inhibitor"],
+}
 
 
 @dataclass
@@ -369,16 +442,30 @@ class DDIEngine:
         if key_a == key_b:
             return res
 
+        # честный статус: если по одному из препаратов нет данных
+        # лейбла — взаимодействие НЕ проверялось, а не «не найдено»
+        if not self._texts.get(key_a) or not self._texts.get(key_b):
+            res.severity = "НЕ ПРОВЕРЕНО"
+            return res
+
         for from_key, other_key in ((key_a, key_b), (key_b, key_a)):
             text = self._texts.get(from_key, "")
             if not text:
                 continue
+            # сначала точное вещество, потом фармакологический класс
             needle = self._ingredients[other_key]
+            matched_by = needle
             if not needle or needle not in text:
-                continue
+                hints = [h for h in CLASS_HINTS.get(other_key, [])
+                         if h in text]
+                if not hints:
+                    continue
+                needle = hints[0]
+                matched_by = f"класс «{hints[0]}»"
             res.checked_in.append(from_key)
             found = self._snippets(text, needle)
-            res.snippets.extend(f"[{from_key}] …{s}…" for s in found)
+            res.snippets.extend(f"[{from_key} · {matched_by}] …{s}…"
+                                for s in found)
 
             joined = " ".join(res.snippets).lower()
             for severity, words in _RULES:

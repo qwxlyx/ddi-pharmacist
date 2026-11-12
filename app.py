@@ -21,6 +21,7 @@ SEVERITY_STYLE = {
     "ПРОТИВОПОКАЗАНО": "🔴 ПРОТИВОПОКАЗАНО",
     "ВЫСОКИЙ РИСК": "🟠 ВЫСОКИЙ РИСК",
     "СРЕДНИЙ РИСК": "🟡 СРЕДНИЙ РИСК",
+    "НЕ ПРОВЕРЕНО": "🟣 НЕ ПРОВЕРЕНО (нет лейбла)",
     "НИЗКИЙ РИСК": "🟢 НИЗКИЙ РИСК",
     "НЕ ОБНАРУЖЕНО": "⚪ не обнаружено в лейблах",
 }
@@ -90,12 +91,18 @@ with st.status("Агент 2/4: загрузка лейблов FDA (DailyMed)�
     labels = {}
     for name, ident in identities.items():
         lbl = dm_agent.fetch(ident)
-        labels[name] = lbl
+        # ключ — действующее вещество: поиск взаимодействий идёт
+        # по каноническому имени, а не по исходному вводу
+        key = (ident.ingredient or name).lower()
+        if key in labels and labels[key].found and not lbl.found:
+            st.write(f"⏭️ **{name}** — уже покрыт лейблом «{key}»")
+            continue
+        labels[key] = lbl
         if lbl.found:
-            st.write(f"✅ **{name}** — лейбл: {lbl.title[:80]} "
+            st.write(f"✅ **{name}** → *{key}* — лейбл: {lbl.title[:70]} "
                      f"(обновлён {lbl.published})")
         else:
-            st.write(f"⚠️ **{name}** — {lbl.note or 'лейбл не найден'}")
+            st.write(f"⚠️ **{name}** → *{key}* — {lbl.note or 'лейбл не найден'}")
     status.update(label="Агент 2/4: лейблы загружены", state="complete")
 
 # ------------------------------------------------------------------
@@ -129,11 +136,14 @@ with st.status("Агент 4/4: перекрёстный анализ взаим
                expanded=True) as status:
     engine = DDIEngine(labels)
     results = []
-    for a, b in itertools.combinations(drug_names, 2):
+    for a, b in itertools.combinations(list(labels.keys()), 2):
         r = engine.check_pair(a, b)
         results.append(r)
         if r.severity in ("ПРОТИВОПОКАЗАНО", "ВЫСОКИЙ РИСК"):
             st.write(f"🟠 **{a} + {b}** → {r.severity}")
+        elif r.severity == "НЕ ПРОВЕРЕНО":
+            st.write(f"🟣 **{a} + {b}** → нет лейбла, взаимодействие "
+                     f"не проверялось")
         elif r.severity != "НЕ ОБНАРУЖЕНО":
             st.write(f"🟡 **{a} + {b}** → {r.severity}")
         else:
@@ -159,6 +169,11 @@ with tab_pairs:
           "Фрагментов лейбла": len(r.snippets)}
          for r in results])
     st.dataframe(df_pairs, use_container_width=True, hide_index=True)
+    if any(r.severity == "НЕ ПРОВЕРЕНО" for r in results):
+        st.warning("🟣 Для части препаратов DailyMed не нашёл лейбл — чаще "
+                   "всего это неамериканские бренды, БАДы и препараты вне "
+                   "US-реестра. По таким парам взаимодействие НЕ проверялось: "
+                   "«не проверено» ≠ «безопасно».")
 
     worst = sorted(results,
                    key=lambda r: SEVERITY_ORDER.index(r.severity))
@@ -172,6 +187,7 @@ with tab_pairs:
                     st.caption(s)
                     if s.startswith("[") and "] " in s:
                         prefix, body = s.split("] ", 1)
+                        prefix = prefix.lstrip("[").strip()
                         body = body.strip("… .")
                     else:
                         prefix, body = "", s
