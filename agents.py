@@ -142,6 +142,24 @@ class RxNormAgent:
             ident.note = ("действующее вещество не определено, "
                           "поиск по исходному вводу")
 
+        # контроль качества: приблизительный поиск может «натянуть"
+        # совпадение на слабо похожее слово (напр. «natrium» — это латинское
+        # «sodium», элемент, а не лекарство). Если найденное вещество почти
+        # не пересекается с вводом — честно помечаем низкую уверенность.
+        if ident.found and ident.ingredient:
+            # сравниваем не с сырым вводом, а со ВСЕМИ его вариантами:
+            # «enoxaparinum natrium» через вариант «enoxaparin» совпадает
+            # с веществом честно и пометки не заслуживает
+            q_toks: set[str] = set()
+            for variant in self._variants(ident.query):
+                q_toks |= set(re.findall(r"[a-z]+", variant))
+            i_toks = set(re.findall(r"[a-z]+", ident.ingredient.lower()))
+            if q_toks and i_toks and not (q_toks & i_toks):
+                ident.note = (
+                    f"низкая уверенность: «{ident.query}» сопоставлено с "
+                    f"«{ident.ingredient}» по приблизительному поиску — "
+                    f"проверьте написание")
+
         ident.name = ident.ingredient or ident.query
         return ident
 
