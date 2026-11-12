@@ -12,6 +12,7 @@ import streamlit as st
 
 from agents import (DDIEngine, DailyMedAgent, FAERSAgent, FAERSUnavailable,
                     RxNormAgent, SEVERITY_ORDER)
+from translator import RU_SECTION_TITLES, to_ru
 
 st.set_page_config(page_title="ИИ-клинический фармаколог",
                    page_icon="💊", layout="wide")
@@ -169,6 +170,14 @@ with tab_pairs:
                                             "ВЫСОКИЙ РИСК")):
                 for s in r.snippets:
                     st.caption(s)
+                    if s.startswith("[") and "] " in s:
+                        prefix, body = s.split("] ", 1)
+                        body = body.strip("… .")
+                    else:
+                        prefix, body = "", s
+                    ru = to_ru(body, max_chars=600)
+                    if ru:
+                        st.caption(f"Перевод{prefix}: {ru}")
                 sources = [n for n in (r.drug_a, r.drug_b)
                            if n in r.checked_in]
                 for n in sources:
@@ -187,13 +196,23 @@ with tab_labels:
         secs = [(k, v) for k, v in lbl.sections.items()
                 if k != "boxed_warning"]
         if "boxed_warning" in lbl.sections:
-            st.error("**Boxed Warning:** " + lbl.sections["boxed_warning"]
-                     [:600])
+            bw = lbl.sections["boxed_warning"]
+            bw_ru = to_ru(bw[:600], max_chars=600)
+            st.error("**Предупреждение FDA (boxed warning):** "
+                     + (bw_ru or bw[:600]))
         cols = st.columns(2)
         for i, (k, v) in enumerate(secs):
             with cols[i % 2]:
-                with st.expander(v.splitlines()[0].lstrip("# ").strip()):
-                    st.caption(v[:2500])
+                with st.expander(RU_SECTION_TITLES.get(k, k)):
+                    v_ru = to_ru(v[:2500], max_chars=1800)
+                    if v_ru:
+                        st.caption("**Перевод:** " + v_ru)
+                        with st.expander("Оригинал (англ.)"):
+                            st.caption(v[:2500])
+                    else:
+                        st.caption(v[:2500])
+                        st.caption("_Перевод недоступен (лимит "
+                                   "бесплатного API или сеть)_")
 
 with tab_faers:
     if not faers_ok:
@@ -206,8 +225,12 @@ with tab_faers:
             st.metric("Сообщений о НЯ (все годы, FAERS)",
                       f"{sig.total_reports:,}".replace(",", " "))
             if sig.top_reactions:
+                terms = []
+                for t, _ in sig.top_reactions:
+                    ru = to_ru(t, max_chars=120)
+                    terms.append(f"{ru} ({t})" if ru else t)
                 chart = pd.DataFrame(
-                    {"Нежелательное явление": [t for t, _ in sig.top_reactions],
+                    {"Нежелательное явление": terms,
                      "Число сообщений": [c for _, c in sig.top_reactions]}
                 ).set_index("Нежелательное явление")
                 st.bar_chart(chart)
