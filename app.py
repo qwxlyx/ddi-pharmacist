@@ -17,22 +17,70 @@ from translator import RU_SECTION_TITLES, to_ru
 st.set_page_config(page_title="ИИ-клинический фармаколог",
                    page_icon="💊", layout="wide")
 
-SEVERITY_STYLE = {
-    "ПРОТИВОПОКАЗАНО": "🔴 ПРОТИВОПОКАЗАНО",
-    "ВЫСОКИЙ РИСК": "🟠 ВЫСОКИЙ РИСК",
-    "СРЕДНИЙ РИСК": "🟡 СРЕДНИЙ РИСК",
-    "НЕ ПРОВЕРЕНО": "🟣 НЕ ПРОВЕРЕНО (нет лейбла)",
-    "НИЗКИЙ РИСК": "🟢 НИЗКИЙ РИСК",
-    "НЕ ОБНАРУЖЕНО": "⚪ не обнаружено в лейблах",
+# ------------------------------------------------------------------
+# Фирменный стиль: сливово-фиолетовый + кремовый (как в презентации)
+# ------------------------------------------------------------------
+SEV_COLOR = {
+    "ПРОТИВОПОКАЗАНО": "#A94438",
+    "ВЫСОКИЙ РИСК": "#C08A3E",
+    "СРЕДНИЙ РИСК": "#A98F2F",
+    "НЕ ПРОВЕРЕНО": "#684765",
+    "НИЗКИЙ РИСК": "#71855B",
+    "НЕ ОБНАРУЖЕНО": "#9A938C",
+}
+SEV_ICON = {
+    "ПРОТИВОПОКАЗАНО": "⛔",
+    "ВЫСОКИЙ РИСК": "🔶",
+    "СРЕДНИЙ РИСК": "⚠️",
+    "НЕ ПРОВЕРЕНО": "🔮",
+    "НИЗКИЙ РИСК": "✅",
+    "НЕ ОБНАРУЖЕНО": "⚪",
 }
 
-st.title("💊 ИИ-клинический фармаколог")
-st.markdown(
-    "Мультиагентная проверка лекарственной схемы: нормализация препаратов "
-    "(**RxNorm**), официальные лейблы FDA с анализом взаимодействий "
-    "(**DailyMed**), сигналы безопасности из базы фармаконадзора "
-    "(**FAERS / openFDA**)."
-)
+st.markdown("""
+<style>
+  :root {
+    --brand: #684765; --accent: #C9828B; --cream: #F7F3E8;
+    --ink: #3A3340; --muted: #8C7F8A;
+  }
+  .stApp { background: var(--cream); }
+  h1, h2, h3 { color: var(--brand) !important; }
+  section[data-testid="stSidebar"] { background: #EFE9DC; }
+  .brand-banner {
+    background: linear-gradient(135deg, #684765 0%, #8A6B87 100%);
+    border-radius: 14px; padding: 22px 28px; margin-bottom: 18px;
+    color: #F7F3E8;
+  }
+  .brand-banner h1 { color: #F7F3E8 !important; font-size: 1.7rem; margin: 0; }
+  .brand-banner p { color: #E5D9E4; margin: 6px 0 0 0; font-size: 0.95rem; }
+  .sev-chip {
+    display: inline-block; padding: 3px 12px; border-radius: 999px;
+    color: #fff; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.4px;
+  }
+  .ddi-card {
+    background: #FFFFFF; border-radius: 12px; padding: 14px 18px;
+    margin: 8px 0; border-left: 6px solid #ccc;
+    box-shadow: 0 1px 3px rgba(60,45,60,0.12);
+  }
+  .ddi-card .pair { font-size: 1.05rem; font-weight: 700; color: var(--ink); }
+  .ddi-card .meta { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+  .summary-strip { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 14px 0; }
+  .sum-pill {
+    background: #fff; border-radius: 10px; padding: 8px 14px;
+    box-shadow: 0 1px 3px rgba(60,45,60,0.10); text-align: center; min-width: 92px;
+  }
+  .sum-pill .n { font-size: 1.5rem; font-weight: 800; }
+  .sum-pill .t { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.5px; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="brand-banner">
+  <h1>💊 ИИ-клинический фармаколог</h1>
+  <p>Мультиагентная проверка лекарственной схемы · официальные источники FDA и NLM ·
+  RxNorm → DailyMed → FAERS → DDI</p>
+</div>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Схема лечения")
@@ -59,7 +107,7 @@ if len(drug_names) < 2:
 # ------------------------------------------------------------------
 # Агент 1 — RxNorm
 # ------------------------------------------------------------------
-with st.status("Агент 1/4: нормализация названий (RxNorm)…",
+with st.status("Агент 1/4 · нормализация названий (RxNorm)…",
                expanded=True) as status:
     rx_agent = RxNormAgent()
     identities = {}
@@ -71,7 +119,7 @@ with st.status("Агент 1/4: нормализация названий (RxNor
                      f"действующее вещество: *{ident.ingredient or '—'}*")
         else:
             st.write(f"⚠️ **{name}** — {ident.note or 'не найден'}")
-    status.update(label="Агент 1/4: нормализация завершена", state="complete")
+    status.update(label="Агент 1/4 · нормализация завершена", state="complete")
 
 norm_df = pd.DataFrame(
     [{"Ввод": i.query,
@@ -85,7 +133,7 @@ norm_df = pd.DataFrame(
 # ------------------------------------------------------------------
 # Агент 2 — DailyMed
 # ------------------------------------------------------------------
-with st.status("Агент 2/4: загрузка лейблов FDA (DailyMed)…",
+with st.status("Агент 2/4 · загрузка лейблов FDA (DailyMed)…",
                expanded=True) as status:
     dm_agent = DailyMedAgent()
     labels = {}
@@ -103,14 +151,14 @@ with st.status("Агент 2/4: загрузка лейблов FDA (DailyMed)�
                      f"(обновлён {lbl.published})")
         else:
             st.write(f"⚠️ **{name}** → *{key}* — {lbl.note or 'лейбл не найден'}")
-    status.update(label="Агент 2/4: лейблы загружены", state="complete")
+    status.update(label="Агент 2/4 · лейблы загружены", state="complete")
 
 # ------------------------------------------------------------------
 # Агент 3 — FAERS (openFDA)
 # ------------------------------------------------------------------
 faers_ok = False
 signals = {}
-with st.status("Агент 3/4: сигналы фармаконадзора (FAERS)…",
+with st.status("Агент 3/4 · сигналы фармаконадзора (FAERS)…",
                expanded=True) as status:
     faers_agent = FAERSAgent()
     try:
@@ -123,32 +171,28 @@ with st.status("Агент 3/4: сигналы фармаконадзора (FAE
                          f"**{sig.total_reports:,}**".replace(",", " "))
             else:
                 st.write(f"⚠️ **{name}** — {sig.note or 'нет данных'}")
-        status.update(label="Агент 3/4: FAERS обработан", state="complete")
+        status.update(label="Агент 3/4 · FAERS обработан", state="complete")
     except FAERSUnavailable as e:
-        status.update(label="Агент 3/4: FAERS недоступен из этой сети",
+        status.update(label="Агент 3/4 · FAERS недоступен из этой сети",
                       state="error")
         st.warning(f"{e}")
 
 # ------------------------------------------------------------------
 # Агент 4 — DDI-движок
 # ------------------------------------------------------------------
-with st.status("Агент 4/4: перекрёстный анализ взаимодействий (DDI)…",
+with st.status("Агент 4/4 · перекрёстный анализ взаимодействий (DDI)…",
                expanded=True) as status:
     engine = DDIEngine(labels)
     results = []
     for a, b in itertools.combinations(list(labels.keys()), 2):
         r = engine.check_pair(a, b)
         results.append(r)
-        if r.severity in ("ПРОТИВОПОКАЗАНО", "ВЫСОКИЙ РИСК"):
-            st.write(f"🟠 **{a} + {b}** → {r.severity}")
-        elif r.severity == "НЕ ПРОВЕРЕНО":
-            st.write(f"🟣 **{a} + {b}** → нет лейбла, взаимодействие "
-                     f"не проверялось")
-        elif r.severity != "НЕ ОБНАРУЖЕНО":
-            st.write(f"🟡 **{a} + {b}** → {r.severity}")
+        ic = SEV_ICON[r.severity]
+        if r.severity == "НЕ ОБНАРУЖЕНО":
+            st.write(f"{ic} {a} + {b} — явных упоминаний в лейблах нет")
         else:
-            st.write(f"⚪ {a} + {b} → явных упоминаний в лейблах нет")
-    status.update(label="Агент 4/4: анализ завершён", state="complete")
+            st.write(f"{ic} **{a} + {b}** → {r.severity}")
+    status.update(label="Агент 4/4 · анализ завершён", state="complete")
 
 # ------------------------------------------------------------------
 # Отчёт
@@ -163,42 +207,61 @@ tab_pairs, tab_labels, tab_faers, tab_norm = st.tabs(
 with tab_pairs:
     if not results:
         st.write("Нет пар для анализа.")
-    df_pairs = pd.DataFrame(
-        [{"Пара": f"{r.drug_a} + {r.drug_b}",
-          "Оценка": SEVERITY_STYLE[r.severity],
-          "Фрагментов лейбла": len(r.snippets)}
-         for r in results])
-    st.dataframe(df_pairs, use_container_width=True, hide_index=True)
-    if any(r.severity == "НЕ ПРОВЕРЕНО" for r in results):
-        st.warning("🟣 Для части препаратов DailyMed не нашёл лейбл — чаще "
-                   "всего это неамериканские бренды, БАДы и препараты вне "
-                   "US-реестра. По таким парам взаимодействие НЕ проверялось: "
-                   "«не проверено» ≠ «безопасно».")
+    else:
+        # сводная лента: сколько пар каждого уровня
+        counts = {s: sum(1 for r in results if r.severity == s)
+                  for s in SEVERITY_ORDER if any(r.severity == s for r in results)}
+        pills = "".join(
+            f'<div class="sum-pill"><div class="n" style="color:{SEV_COLOR[s]}">'
+            f"{SEV_ICON[s]} {n}</div>"
+            f'<div class="t">{s}</div></div>'
+            for s, n in counts.items())
+        st.markdown(f'<div class="summary-strip">{pills}</div>',
+                    unsafe_allow_html=True)
 
-    worst = sorted(results,
-                   key=lambda r: SEVERITY_ORDER.index(r.severity))
-    for r in worst:
-        if r.snippets:
-            with st.expander(
-                    f"{SEVERITY_STYLE[r.severity]} — {r.drug_a} + {r.drug_b}",
-                    expanded=r.severity in ("ПРОТИВОПОКАЗАНО",
-                                            "ВЫСОКИЙ РИСК")):
-                for s in r.snippets:
-                    st.caption(s)
-                    if s.startswith("[") and "] " in s:
-                        prefix, body = s.split("] ", 1)
-                        prefix = prefix.lstrip("[").strip()
-                        body = body.strip("… .")
-                    else:
-                        prefix, body = "", s
-                    ru = to_ru(body, max_chars=600)
-                    if ru:
-                        st.caption(f"Перевод{prefix}: {ru}")
-                sources = [n for n in (r.drug_a, r.drug_b)
-                           if n in r.checked_in]
-                for n in sources:
-                    if labels[n].url:
-                        st.markdown(f"- лейбл [{n}]({labels[n].url})")
+        if any(r.severity == "НЕ ПРОВЕРЕНО" for r in results):
+            st.warning("🔮 Для части препаратов DailyMed не нашёл лейбл — чаще "
+                       "всего это неамериканские бренды, БАДы и препараты вне "
+                       "US-реестра. По таким парам взаимодействие НЕ проверялось: "
+                       "«не проверено» ≠ «безопасно».")
+
+        worst = sorted(results, key=lambda r: SEVERITY_ORDER.index(r.severity))
+        for r in worst:
+            col = SEV_COLOR[r.severity]
+            n_snip = len(r.snippets)
+            if n_snip:
+                meta = (f"фрагментов лейбла: {n_snip} · источники: "
+                        + ", ".join(r.checked_in))
+            else:
+                meta = "фрагментов нет"
+            card = (
+                f'<div class="ddi-card" style="border-left-color:{col}">'
+                f'<span class="sev-chip" style="background:{col}">'
+                f"{SEV_ICON[r.severity]} {r.severity}</span> "
+                f'<span class="pair">{r.drug_a} + {r.drug_b}</span>'
+                f'<div class="meta">{meta}</div></div>')
+            st.markdown(card, unsafe_allow_html=True)
+
+            if r.snippets:
+                with st.expander("Фрагменты лейбла и перевод",
+                                 expanded=r.severity in ("ПРОТИВОПОКАЗАНО",
+                                                         "ВЫСОКИЙ РИСК")):
+                    for s in r.snippets:
+                        st.caption(s)
+                        if s.startswith("[") and "] " in s:
+                            prefix, body = s.split("] ", 1)
+                            prefix = prefix.lstrip("[").strip()
+                            body = body.strip("… .")
+                        else:
+                            prefix, body = "", s
+                        ru = to_ru(body, max_chars=600)
+                        if ru:
+                            st.caption(f"Перевод{prefix}: {ru}")
+                    sources = [n for n in (r.drug_a, r.drug_b)
+                               if n in r.checked_in]
+                    for n in sources:
+                        if labels[n].url:
+                            st.markdown(f"- лейбл [{n}]({labels[n].url})")
 
 with tab_labels:
     for name, lbl in labels.items():
@@ -238,18 +301,21 @@ with tab_faers:
     for name, sig in signals.items():
         st.subheader(name)
         if sig.ok:
-            st.metric("Сообщений о НЯ (все годы, FAERS)",
-                      f"{sig.total_reports:,}".replace(",", " "))
-            if sig.top_reactions:
-                terms = []
-                for t, _ in sig.top_reactions:
-                    ru = to_ru(t, max_chars=120)
-                    terms.append(f"{ru} ({t})" if ru else t)
-                chart = pd.DataFrame(
-                    {"Нежелательное явление": terms,
-                     "Число сообщений": [c for _, c in sig.top_reactions]}
-                ).set_index("Нежелательное явление")
-                st.bar_chart(chart)
+            c1, c2 = st.columns([1, 3])
+            with c1:
+                st.metric("Сообщений о НЯ (все годы, FAERS)",
+                          f"{sig.total_reports:,}".replace(",", " "))
+            with c2:
+                if sig.top_reactions:
+                    terms = []
+                    for t, _ in sig.top_reactions:
+                        ru = to_ru(t, max_chars=120)
+                        terms.append(f"{ru} ({t})" if ru else t)
+                    chart = pd.DataFrame(
+                        {"Нежелательное явление": terms,
+                         "Число сообщений": [c for _, c in sig.top_reactions]}
+                    ).set_index("Нежелательное явление")
+                    st.bar_chart(chart)
         else:
             st.caption(sig.note or "нет данных")
 
